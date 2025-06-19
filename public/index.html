@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#4F46E5" />
+    <meta name="description" content="お薬リマインダー - KEGG MEDICUS連携" />
+
+    <!-- PWA設定 -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+
+    <!-- iOS用メタタグ -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="お薬管理" />
+
+    <title>お薬リマインダー</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            animation: {
+              "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+            },
+          },
+        },
+      };
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      body {
+        font-family: "Noto Sans JP", sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+
+      .medication-card {
+        transition: all 0.3s ease;
+      }
+
+      .medication-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+
+      .bleeding-indicator {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin: 0 2px;
+        display: inline-block;
+      }
+
+      .notification-permission {
+        animation: slideDown 0.3s ease-out;
+      }
+
+      @keyframes slideDown {
+        from {
+          opacity: 0;
+          transform: translateY(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+
+    <!-- Service Worker for CodeSandbox -->
+    <script>
+      if (
+        "serviceWorker" in navigator &&
+        window.location.hostname !== "localhost"
+      ) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then(function (registration) {
+              console.log("SW registered: ", registration);
+            })
+            .catch(function (registrationError) {
+              console.log("SW registration failed: ", registrationError);
+            });
+        });
+      }
+
+      // PWAインストールプロンプト
+      let deferredPrompt;
+
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        showInstallBanner();
+      });
+
+      function showInstallBanner() {
+        const banner = document.createElement("div");
+        banner.className =
+          "fixed top-0 left-0 right-0 bg-blue-600 text-white p-3 z-50 notification-permission";
+        banner.innerHTML = `
+        <div class="flex items-center justify-between max-w-4xl mx-auto">
+          <div class="flex items-center gap-2">
+            <span>📱</span>
+            <span class="text-sm">このアプリをホーム画面に追加できます</span>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="installApp()" class="bg-white text-blue-600 px-3 py-1 rounded text-sm font-medium hover:bg-blue-50">
+              インストール
+            </button>
+            <button onclick="dismissInstallBanner()" class="text-white/80 hover:text-white">
+              ✕
+            </button>
+          </div>
+        </div>
+      `;
+        document.body.prepend(banner);
+        window.installBanner = banner;
+      }
+
+      function installApp() {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.then((choiceResult) => {
+            if (choiceResult.outcome === "accepted") {
+              console.log("PWAがインストールされました");
+            }
+            deferredPrompt = null;
+            dismissInstallBanner();
+          });
+        }
+      }
+
+      function dismissInstallBanner() {
+        if (window.installBanner) {
+          window.installBanner.remove();
+          window.installBanner = null;
+        }
+      }
+
+      window.installApp = installApp;
+      window.dismissInstallBanner = dismissInstallBanner;
+    </script>
+  </head>
+  <body>
+    <noscript>JavaScriptを有効にしてください。</noscript>
+    <div id="root"></div>
+  </body>
+</html>

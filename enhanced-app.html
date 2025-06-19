@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#4F46E5" />
+    <meta name="description" content="お薬リマインダー - 全機能版" />
+
+    <title>お薬リマインダー - 全機能版</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- PDF生成ライブラリ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- 日付ライブラリ -->
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      body {
+        font-family: "Noto Sans JP", sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+
+      .medication-card {
+        transition: all 0.3s ease;
+      }
+
+      .medication-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+
+      .calendar-day {
+        position: relative;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .calendar-day:hover {
+        background-color: rgba(59, 130, 246, 0.1);
+      }
+
+      .calendar-day.has-medication {
+        background-color: rgba(34, 197, 94, 0.2);
+      }
+
+      .calendar-day.has-appointment {
+        background-color: rgba(239, 68, 68, 0.2);
+      }
+
+      .calendar-day.selected {
+        background-color: rgba(59, 130, 246, 0.3);
+      }
+
+      .chart-container {
+        height: 300px;
+        margin: 1rem 0;
+      }
+
+      .export-button {
+        background: linear-gradient(45deg, #4f46e5, #7c3aed);
+      }
+
+      .kegg-search {
+        background: linear-gradient(45deg, #059669, #0d9488);
+      }
+
+      .appointment-form {
+        background: linear-gradient(135deg, #fef3c7, #fcd34d);
+      }
+
+      .sync-status {
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .slide-in {
+        animation: slideIn 0.3s ease-out;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- React CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect, useCallback, useRef } = React;
+
+      // アイコンコンポーネント
+      const Icons = {
+        Pill: () => <span className="text-2xl">💊</span>,
+        Chart: () => <span className="text-lg">📊</span>,
+        Calendar: () => <span className="text-lg">📅</span>,
+        Export: () => <span className="text-lg">📤</span>,
+        Hospital: () => <span className="text-lg">🏥</span>,
+        Cloud: () => <span className="text-lg">☁️</span>,
+        Search: () => <span className="text-lg">🔍</span>,
+        Plus: () => <span className="text-lg">➕</span>,
+        Trash: () => <span className="text-lg">🗑️</span>,
+        Check: () => <span className="text-lg">✅</span>,
+        Alert: () => <span className="text-lg">⚠️</span>,
+        Mental: () => <span className="text-lg">🧠</span>,
+        Report: () => <span className="text-lg">📋</span>,
+        Download: () => <span className="text-lg">⬇️</span>,
+        Sync: () => <span className="text-lg">🔄</span>,
+      };
+
+      // 通知ユーティリティ（簡易版）
+      const useNotifications = () => {
+        const [isNotificationEnabled, setIsNotificationEnabled] =
+          useState(false);
+        const [isInitializing, setIsInitializing] = useState(false);
+
+        useEffect(() => {
+          if (
+            "Notification" in window &&
+            Notification.permission === "granted"
+          ) {
+            setIsNotificationEnabled(true);
+          }
+        }, []);
+
+        return { isNotificationEnabled, isInitializing };
+      };
+
+      const showInstantNotification = (title, body) => {
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(title, { body });
+        }
+      };
+
+      // KEGG MEDICUS API連携（模擬）
+      const searchMedication = async (query) => {
+        // 実際のAPIの代わりに模擬データを返す
+        const mockData = [
+          {
+            id: 1,
+            name: "セルトラリン錠25mg",
+            category: "抗うつ剤",
+            interactions: ["ワルファリン"],
+          },
+          {
+            id: 2,
+            name: "レクサプロ錠10mg",
+            category: "抗うつ剤",
+            interactions: ["MAO阻害剤"],
+          },
+          {
+            id: 3,
+            name: "レキサルティOD錠1mg",
+            category: "抗精神病薬",
+            interactions: ["CYP2D6阻害剤"],
+          },
+          {
+            id: 4,
+            name: "ヤーズフレックス錠",
+            category: "低用量ピル",
+            interactions: ["セイヨウオトギリソウ"],
+          },
+        ];
+
+        return mockData.filter(
+          (med) =>
+            med.name.toLowerCase().includes(query.toLowerCase()) ||
+            med.category.includes(query)
+        );
+      };
+
+      // カレンダーコンポーネント
+      const CustomCalendar = ({
+        medications,
+        appointments,
+        onDateSelect,
+        selectedDate,
+      }) => {
+        const [currentMonth, setCurrentMonth] = useState(new Date());
+
+        const getDaysInMonth = (date) => {
+          const year = date.getFullYear();
+          const month = date.getMonth();
+          const firstDay = new Date(year, month, 1);
+          const lastDay = new Date(year, month + 1, 0);
+          const daysInMonth = lastDay.getDate();
+          const startingDayOfWeek = firstDay.getDay();
+
+          const days = [];
+
+          // 前月の日付
+          for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+            const prevDate = new Date(year, month, -i);
+            days.push({ date: prevDate, isCurrentMonth: false });
+          }
+
+          // 今月の日付
+          for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month, day);
+            days.push({ date, isCurrentMonth: true });
+          }
+
+          // 来月の日付
+          const remainingDays = 42 - days.length;
+          for (let day = 1; day <= remainingDays; day++) {
+            const nextDate = new Date(year, month + 1, day);
+            days.push({ date: nextDate, isCurrentMonth: false });
+          }
+
+          return days;
+        };
+
+        const days = getDaysInMonth(currentMonth);
+        const monthNames = [
+          "1月",
+          "2月",
+          "3月",
+          "4月",
+          "5月",
+          "6月",
+          "7月",
+          "8月",
+          "9月",
+          "10月",
+          "11月",
+          "12月",
+        ];
+        const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+
+        const navigateMonth = (direction) => {
+          setCurrentMonth((prev) => {
+            const newDate = new Date(prev);
+            newDate.setMonth(prev.getMonth() + direction);
+            return newDate;
+          });
+        };
+
+        const hasEvents = (date) => {
+          const dateStr = date.toDateString();
+          const hasMedication = medications.some((med) =>
+            med.times.some((time) => {
+              // 簡易的な服薬予定チェック
+              return true;
+            })
+          );
+          const hasAppointment = appointments.some(
+            (apt) => apt.date === dateStr
+          );
+          return { hasMedication, hasAppointment };
+        };
+
+        return (
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex justify-between items-center mb-4">
+              <button
+                onClick={() => navigateMonth(-1)}
+                className="p-2 hover:bg-gray-100 rounded"
+              >
+                ←
+              </button>
+              <h3 className="text-lg font-semibold">
+                {currentMonth.getFullYear()}年{" "}
+                {monthNames[currentMonth.getMonth()]}
+              </h3>
+              <button
+                onClick={() => navigateMonth(1)}
+                className="p-2 hover:bg-gray-100 rounded"
+              >
+                →
+              </button>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 mb-2">
+              {dayNames.map((day) => (
+                <div
+                  key={day}
+                  className="text-center text-sm font-medium text-gray-500 p-2"
+                >
+                  {day}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-1">
+              {days.map((day, index) => {
+                const events = hasEvents(day.date);
+                const isSelected =
+                  selectedDate &&
+                  day.date.toDateString() === selectedDate.toDateString();
+
+                return (
+                  <div
+                    key={index}
+                    className={`
+                    calendar-day p-2 text-center text-sm rounded cursor-pointer
+                    ${!day.isCurrentMonth ? "text-gray-300" : "text-gray-700"}
+                    ${events.hasMedication ? "has-medication" : ""}
+                    ${events.hasAppointment ? "has-appointment" : ""}
+                    ${isSelected ? "selected ring-2 ring-blue-500" : ""}
+                  `}
+                    onClick={() => onDateSelect(day.date)}
+                  >
+                    {day.date.getDate()}
+                    {events.hasMedication && (
+                      <div className="w-1 h-1 bg-green-500 rounded-full mx-auto mt-1"></div>
+                    )}
+                    {events.hasAppointment && (
+                      <div className="w-1 h-1 bg-red-500 rounded-full mx-auto mt-1"></div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      };
+
+      // グラフコンポーネント
+      const ChartComponent = ({ data, type, title }) => {
+        const chartRef = useRef(null);
+        const chartInstance = useRef(null);
+
+        useEffect(() => {
+          if (chartRef.current && data.length > 0) {
+            const ctx = chartRef.current.getContext("2d");
+
+            if (chartInstance.current) {
+              chartInstance.current.destroy();
+            }
+
+            chartInstance.current = new Chart(ctx, {
+              type: type,
+              data: {
+                labels: data.map((item) => item.label),
+                datasets: [
+                  {
+                    label: title,
+                    data: data.map((item) => item.value),
+                    backgroundColor:
+                      type === "line"
+                        ? "rgba(59, 130, 246, 0.1)"
+                        : [
+                            "rgba(59, 130, 246, 0.8)",
+                            "rgba(34, 197, 94, 0.8)",
+                            "rgba(239, 68, 68, 0.8)",
+                            "rgba(245, 158, 11, 0.8)",
+                            "rgba(168, 85, 247, 0.8)",
+                          ],
+                    borderColor: "rgba(59, 130, 246, 1)",
+                    borderWidth: 2,
+                    fill: type === "line",
+                  },
+                ],
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  title: {
+                    display: true,
+                    text: title,
+                  },
+                },
+                scales:
+                  type === "line"
+                    ? {
+                        y: {
+                          beginAtZero: true,
+                          max: 10,
+                        },
+                      }
+                    : {},
+              },
+            });
+          }
+
+          return () => {
+            if (chartInstance.current) {
+              chartInstance.current.destroy();
+            }
+          };
+        }, [data, type, title]);
+
+        return (
+          <div className="chart-container">
+            <canvas ref={chartRef}></canvas>
+          </div>
+        );
+      };
+
+      // データエクスポート機能
+      const exportToPDF = async (elementId, filename) => {
+        try {
+          const element = document.getElementById(elementId);
+          const canvas = await html2canvas(element);
+          const imgData = canvas.toDataURL("image/png");
+
+          const pdf = new jsPDF();
+          const imgWidth = 210;
+          const pageHeight = 295;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          let heightLeft = imgHeight;
+
+          let position = 0;
+
+          pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+
+          while (heightLeft >= 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+          }
+
+          pdf.save(filename);
+          showInstantNotification(
+            "📄 PDF生成完了",
+            `${filename}がダウンロードされました`
+          );
+        } catch (error) {
+          console.error("PDF生成エラー:", error);
+          showInstantNotification(
+            "❌ PDF生成失敗",
+            "PDF生成中にエラーが発生しました"
+          );
+        }
+      };
+
+      const exportToCSV = (data, filename) => {
+        try {
+          const csvContent =
+            "data:text/csv;charset=utf-8," +
+            data.map((row) => row.join(",")).join("\\n");
+
+          const encodedUri = encodeURI(csvContent);
+          const link = document.createElement("a");
+          link.setAttribute("href", encodedUri);
+          link.setAttribute("download", filename);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          showInstantNotification(
+            "📊 CSV生成完了",
+            `${filename}がダウンロードされました`
+          );
+        } catch (error) {
+          console.error("CSV生成エラー:", error);
+          showInstantNotification(
+            "❌ CSV生成失敗",
+            "CSV生成中にエラーが発生しました"
+          );
+        }
+      };
+
+      // メインアプリケーション
+      const EnhancedMedicationApp = () => {
+        // 基本状態
+        const [activeTab, setActiveTab] = useState("medications");
+        const [medications, setMedications] = useState([]);
+        const [records, setRecords] = useState([]);
+        const [bleedingRecords, setBleedingRecords] = useState([]);
+        const [mentalRecords, setMentalRecords] = useState([]);
+        const [appointments, setAppointments] = useState([]);
+
+        // UI状態
+        const [showAddForm, setShowAddForm] = useState(false);
+        const [currentTime, setCurrentTime] = useState(new Date());
+        const [selectedDate, setSelectedDate] = useState(new Date());
+        const [searchResults, setSearchResults] = useState([]);
+        const [isSearching, setIsSearching] = useState(false);
+        const [syncStatus, setSyncStatus] = useState("synced"); // 'syncing', 'synced', 'error'
+
+        // フォーム状態
+        const [newMedication, setNewMedication] = useState({
+          name: "",
+          dosage: "",
+          times: ["09:00"],
+          notes: "",
+          isYazFlex: false,
+          isAntidepressant: false,
+          isAntipsychotic: false,
+        });
+
+        const [newAppointment, setNewAppointment] = useState({
+          date: new Date().toISOString().split("T")[0],
+          time: "10:00",
+          hospital: "",
+          doctor: "",
+          purpose: "",
+          notes: "",
+        });
+
+        const { isNotificationEnabled } = useNotifications();
+
+        // 時刻更新
+        useEffect(() => {
+          const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+          return () => clearInterval(timer);
+        }, []);
+
+        // ローカルストレージ
+        useEffect(() => {
+          const savedData = localStorage.getItem("enhancedMedicationApp");
+          if (savedData) {
+            try {
+              const data = JSON.parse(savedData);
+              setMedications(data.medications || []);
+              setRecords(data.records || []);
+              setBleedingRecords(data.bleedingRecords || []);
+              setMentalRecords(data.mentalRecords || []);
+              setAppointments(data.appointments || []);
+            } catch (error) {
+              console.error("データ読み込みエラー:", error);
+            }
+          }
+        }, []);
+
+        useEffect(() => {
+          const data = {
+            medications,
+            records,
+            bleedingRecords,
+            mentalRecords,
+            appointments,
+          };
+          localStorage.setItem("enhancedMedicationApp", JSON.stringify(data));
+        }, [
+          medications,
+          records,
+          bleedingRecords,
+          mentalRecords,
+          appointments,
+        ]);
+
+        // 薬剤検索
+        const handleMedicationSearch = async (query) => {
+          if (query.length < 2) {
+            setSearchResults([]);
+            return;
+          }
+
+          setIsSearching(true);
+          try {
+            const results = await searchMedication(query);
+            setSearchResults(results);
+          } catch (error) {
+            console.error("検索エラー:", error);
+          } finally {
+            setIsSearching(false);
+          }
+        };
+
+        // 薬剤追加
+        const addMedication = () => {
+          if (!newMedication.name.trim()) return;
+
+          const medication = {
+            id: Date.now(),
+            ...newMedication,
+            times: newMedication.times.filter((time) => time.trim() !== ""),
+            createdAt: new Date(),
+          };
+
+          setMedications([...medications, medication]);
+
+          if (isNotificationEnabled) {
+            showInstantNotification(
+              "✅ お薬を追加",
+              `${medication.name} を追加しました`
+            );
+          }
+
+          setNewMedication({
+            name: "",
+            dosage: "",
+            times: ["09:00"],
+            notes: "",
+            isYazFlex: false,
+            isAntidepressant: false,
+            isAntipsychotic: false,
+          });
+          setShowAddForm(false);
+        };
+
+        // 予約追加
+        const addAppointment = () => {
+          if (!newAppointment.hospital.trim()) return;
+
+          const appointment = {
+            id: Date.now(),
+            ...newAppointment,
+            date: new Date(newAppointment.date).toDateString(),
+            createdAt: new Date(),
+          };
+
+          setAppointments([...appointments, appointment]);
+          showInstantNotification(
+            "🏥 予約を追加",
+            `${appointment.hospital} の予約を追加しました`
+          );
+
+          setNewAppointment({
+            date: new Date().toISOString().split("T")[0],
+            time: "10:00",
+            hospital: "",
+            doctor: "",
+            purpose: "",
+            notes: "",
+          });
+        };
+
+        // 服薬記録
+        const markAsTaken = (medicationId, time = null) => {
+          const now = new Date();
+          const record = {
+            id: Date.now(),
+            medicationId,
+            date: now.toDateString(),
+            time: time || now.toTimeString().split(" ")[0].slice(0, 5),
+            timestamp: now,
+          };
+          setRecords([...records, record]);
+        };
+
+        // 今日の服薬記録取得
+        const getTodaysRecords = (medicationId, time) => {
+          const today = new Date().toDateString();
+          return records.find(
+            (record) =>
+              record.medicationId === medicationId &&
+              record.date === today &&
+              record.time === time
+          );
+        };
+
+        // チャート用データ生成
+        const generateChartData = () => {
+          const last7Days = [];
+          for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toDateString();
+
+            const dayRecords = records.filter((r) => r.date === dateStr);
+            const mentalRecord = mentalRecords.find(
+              (r) => r.date === date.toISOString().split("T")[0]
+            );
+
+            last7Days.push({
+              label: `${date.getMonth() + 1}/${date.getDate()}`,
+              value: dayRecords.length,
+              mood: mentalRecord?.mood || 5,
+            });
+          }
+          return last7Days;
+        };
+
+        const chartData = generateChartData();
+        const moodData = chartData.map((d) => ({
+          label: d.label,
+          value: d.mood,
+        }));
+
+        // クラウド同期（模擬）
+        const syncToCloud = async () => {
+          setSyncStatus("syncing");
+          try {
+            // 模擬的な同期処理
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            setSyncStatus("synced");
+            showInstantNotification(
+              "☁️ 同期完了",
+              "データがクラウドに同期されました"
+            );
+          } catch (error) {
+            setSyncStatus("error");
+            showInstantNotification(
+              "❌ 同期失敗",
+              "同期中にエラーが発生しました"
+            );
+          }
+        };
+
+        // データエクスポート
+        const handleExportPDF = () => {
+          exportToPDF("report-content", "薬剤管理レポート.pdf");
+        };
+
+        const handleExportCSV = () => {
+          const csvData = [
+            ["日付", "薬剤名", "服薬時間", "記録時刻"],
+            ...records.map((record) => {
+              const medication = medications.find(
+                (m) => m.id === record.medicationId
+              );
+              return [
+                record.date,
+                medication?.name || "不明",
+                record.time,
+                record.timestamp,
+              ];
+            }),
+          ];
+          exportToCSV(csvData, "服薬記録.csv");
+        };
+
+        return (
+          <div className="max-w-6xl mx-auto p-4 bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+            <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+              {/* ヘッダー */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Icons.Pill />
+                    <div>
+                      <h1 className="text-2xl font-bold">
+                        お薬リマインダー Pro
+                      </h1>
+                      <p className="text-blue-100">
+                        全機能版 - データ分析・予約管理・KEGG連携対応
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={syncToCloud}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors ${
+                        syncStatus === "syncing" ? "sync-status" : ""
+                      }`}
+                      disabled={syncStatus === "syncing"}
+                    >
+                      <Icons.Sync />
+                      {syncStatus === "syncing"
+                        ? "同期中..."
+                        : syncStatus === "synced"
+                        ? "同期済み"
+                        : "同期"}
+                    </button>
+
+                    <div className="text-right">
+                      <div className="text-blue-100">
+                        {currentTime.toLocaleString("ja-JP", {
+                          month: "long",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                      <div className="text-sm">
+                        {isNotificationEnabled ? "🔔 通知有効" : "🔕 通知無効"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* タブナビゲーション */}
+              <div className="flex border-b overflow-x-auto">
+                {[
+                  {
+                    id: "medications",
+                    label: "お薬管理",
+                    icon: <Icons.Pill />,
+                  },
+                  {
+                    id: "analytics",
+                    label: "データ分析",
+                    icon: <Icons.Chart />,
+                  },
+                  {
+                    id: "calendar",
+                    label: "カレンダー",
+                    icon: <Icons.Calendar />,
+                  },
+                  {
+                    id: "appointments",
+                    label: "病院予約",
+                    icon: <Icons.Hospital />,
+                  },
+                  { id: "kegg", label: "KEGG検索", icon: <Icons.Search /> },
+                  { id: "mental", label: "メンタル", icon: <Icons.Mental /> },
+                  {
+                    id: "export",
+                    label: "エクスポート",
+                    icon: <Icons.Export />,
+                  },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex-shrink-0 py-3 px-4 flex items-center justify-center gap-2 font-medium transition-colors ${
+                      activeTab === tab.id
+                        ? "bg-blue-50 text-blue-600 border-b-2 border-blue-600"
+                        : "text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {tab.icon}
+                    <span className="hidden sm:inline">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-6">
+                {/* お薬管理タブ */}
+                {activeTab === "medications" && (
+                  <div className="slide-in">
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-semibold text-gray-800">
+                        登録中のお薬
+                      </h2>
+                      <button
+                        onClick={() => setShowAddForm(!showAddForm)}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                      >
+                        <Icons.Plus />
+                        薬を追加
+                      </button>
+                    </div>
+
+                    {/* 薬追加フォーム */}
+                    {showAddForm && (
+                      <div className="bg-gray-50 rounded-xl p-6 mb-6 border slide-in">
+                        <h3 className="text-lg font-medium mb-4 text-gray-800">
+                          新しいお薬を追加
+                        </h3>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              薬名
+                            </label>
+                            <input
+                              type="text"
+                              value={newMedication.name}
+                              onChange={(e) => {
+                                setNewMedication({
+                                  ...newMedication,
+                                  name: e.target.value,
+                                });
+                                handleMedicationSearch(e.target.value);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="薬名を入力（KEGG検索対応）"
+                            />
+
+                            {/* 検索結果 */}
+                            {searchResults.length > 0 && (
+                              <div className="mt-2 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                                {searchResults.map((result) => (
+                                  <button
+                                    key={result.id}
+                                    onClick={() => {
+                                      setNewMedication({
+                                        ...newMedication,
+                                        name: result.name,
+                                        isAntidepressant:
+                                          result.category === "抗うつ剤",
+                                        isAntipsychotic:
+                                          result.category === "抗精神病薬",
+                                        isYazFlex:
+                                          result.category === "低用量ピル",
+                                      });
+                                      setSearchResults([]);
+                                    }}
+                                    className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b last:border-b-0"
+                                  >
+                                    <div className="font-medium">
+                                      {result.name}
+                                    </div>
+                                    <div className="text-sm text-gray-600">
+                                      {result.category}
+                                    </div>
+                                    {result.interactions.length > 0 && (
+                                      <div className="text-xs text-red-600">
+                                        相互作用:{" "}
+                                        {result.interactions.join(", ")}
+                                      </div>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              用量
+                            </label>
+                            <input
+                              type="text"
+                              value={newMedication.dosage}
+                              onChange={(e) =>
+                                setNewMedication({
+                                  ...newMedication,
+                                  dosage: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="例：25mg、1錠"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            服薬時間
+                          </label>
+                          {newMedication.times.map((time, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center gap-2 mb-2"
+                            >
+                              <input
+                                type="time"
+                                value={time}
+                                onChange={(e) => {
+                                  const newTimes = [...newMedication.times];
+                                  newTimes[index] = e.target.value;
+                                  setNewMedication({
+                                    ...newMedication,
+                                    times: newTimes,
+                                  });
+                                }}
+                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                              {newMedication.times.length > 1 && (
+                                <button
+                                  onClick={() => {
+                                    const newTimes = newMedication.times.filter(
+                                      (_, i) => i !== index
+                                    );
+                                    setNewMedication({
+                                      ...newMedication,
+                                      times: newTimes,
+                                    });
+                                  }}
+                                  className="text-red-500 hover:text-red-700"
+                                >
+                                  <Icons.Trash />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            onClick={() =>
+                              setNewMedication({
+                                ...newMedication,
+                                times: [...newMedication.times, "12:00"],
+                              })
+                            }
+                            className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+                          >
+                            <Icons.Plus />
+                            時間を追加
+                          </button>
+                        </div>
+
+                        <div className="flex gap-3 mt-6">
+                          <button
+                            onClick={addMedication}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            追加
+                          </button>
+                          <button
+                            onClick={() => setShowAddForm(false)}
+                            className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 薬一覧 */}
+                    <div className="space-y-4">
+                      {medications.length === 0 ? (
+                        <div className="text-center py-12 text-gray-500">
+                          <Icons.Pill />
+                          <p className="mt-2">まだお薬が登録されていません</p>
+                        </div>
+                      ) : (
+                        medications.map((medication) => (
+                          <div
+                            key={medication.id}
+                            className="medication-card bg-white border rounded-xl p-6 shadow-sm"
+                          >
+                            <div className="flex justify-between items-start mb-4">
+                              <div>
+                                <h3 className="text-lg font-semibold text-gray-800">
+                                  {medication.name} {medication.dosage}
+                                </h3>
+                                {medication.notes && (
+                                  <p className="text-sm text-gray-600 mt-1">
+                                    {medication.notes}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                onClick={() =>
+                                  setMedications(
+                                    medications.filter(
+                                      (m) => m.id !== medication.id
+                                    )
+                                  )
+                                }
+                                className="text-red-500 hover:text-red-700 p-1"
+                              >
+                                <Icons.Trash />
+                              </button>
+                            </div>
+
+                            <div className="space-y-2">
+                              <h4 className="text-sm font-medium text-gray-700">
+                                今日の服薬状況
+                              </h4>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                {medication.times.map((time) => {
+                                  const taken = getTodaysRecords(
+                                    medication.id,
+                                    time
+                                  );
+                                  return (
+                                    <div
+                                      key={time}
+                                      className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"
+                                    >
+                                      <span className="text-sm text-gray-700">
+                                        {time}
+                                      </span>
+                                      {taken ? (
+                                        <Icons.Check />
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            markAsTaken(medication.id, time)
+                                          }
+                                          className="text-blue-600 hover:text-blue-800 text-sm"
+                                        >
+                                          服薬
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* データ分析タブ */}
+                {activeTab === "analytics" && (
+                  <div className="slide-in">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-6">
+                      データ分析
+                    </h2>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="bg-white rounded-xl p-6 shadow-sm">
+                        <h3 className="text-lg font-medium mb-4">
+                          過去7日間の服薬回数
+                        </h3>
+                        <ChartComponent
+                          data={chartData}
+                          type="bar"
+                          title="服薬回数"
+                        />
+                      </div>
+
+                      <div className="bg-white rounded-xl p-6 shadow-sm">
+                        <h3 className="text-lg font-medium mb-4">気分の推移</h3>
+                        <ChartComponent
+                          data={moodData}
+                          type="line"
+                          title="気分スコア"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-6 bg-white rounded-xl p-6 shadow-sm">
+                      <h3 className="text-lg font-medium mb-4">統計情報</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="text-center p-4 bg-blue-50 rounded-lg">
+                          <div className="text-2xl font-bold text-blue-600">
+                            {medications.length}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            登録薬剤数
+                          </div>
+                        </div>
+                        <div className="text-center p-4 bg-green-50 rounded-lg">
+                          <div className="text-2xl font-bold text-green-600">
+                            {records.length}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            総服薬回数
+                          </div>
+                        </div>
+                        <div className="text-center p-4 bg-purple-50 rounded-lg">
+                          <div className="text-2xl font-bold text-purple-600">
+                            {mentalRecords.length}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            メンタル記録
+                          </div>
+                        </div>
+                        <div className="text-center p-4 bg-orange-50 rounded-lg">
+                          <div className="text-2xl font-bold text-orange-600">
+                            {appointments.length}
+                          </div>
+                          <div className="text-sm text-gray-600">予約件数</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* カレンダータブ */}
+                {activeTab === "calendar" && (
+                  <div className="slide-in">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-6">
+                      カレンダー
+                    </h2>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <div className="lg:col-span-2">
+                        <CustomCalendar
+                          medications={medications}
+                          appointments={appointments}
+                          onDateSelect={setSelectedDate}
+                          selectedDate={selectedDate}
+                        />
+                      </div>
+
+                      <div className="bg-white rounded-lg shadow p-4">
+                        <h3 className="text-lg font-medium mb-4">
+                          {selectedDate.toLocaleDateString("ja-JP")} の予定
+                        </h3>
+
+                        <div className="space-y-3">
+                          {medications.map((medication) => (
+                            <div
+                              key={medication.id}
+                              className="p-3 bg-green-50 rounded-lg"
+                            >
+                              <div className="font-medium text-green-800">
+                                {medication.name}
+                              </div>
+                              <div className="text-sm text-green-600">
+                                服薬時間: {medication.times.join(", ")}
+                              </div>
+                            </div>
+                          ))}
+
+                          {appointments
+                            .filter(
+                              (apt) => apt.date === selectedDate.toDateString()
+                            )
+                            .map((appointment) => (
+                              <div
+                                key={appointment.id}
+                                className="p-3 bg-red-50 rounded-lg"
+                              >
+                                <div className="font-medium text-red-800">
+                                  {appointment.hospital}
+                                </div>
+                                <div className="text-sm text-red-600">
+                                  {appointment.time} - {appointment.purpose}
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 病院予約タブ */}
+                {activeTab === "appointments" && (
+                  <div className="slide-in">
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-semibold text-gray-800">
+                        病院予約管理
+                      </h2>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="appointment-form rounded-xl p-6">
+                        <h3 className="text-lg font-medium mb-4 text-gray-800">
+                          新しい予約を追加
+                        </h3>
+
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                日付
+                              </label>
+                              <input
+                                type="date"
+                                value={newAppointment.date}
+                                onChange={(e) =>
+                                  setNewAppointment({
+                                    ...newAppointment,
+                                    date: e.target.value,
+                                  })
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                時間
+                              </label>
+                              <input
+                                type="time"
+                                value={newAppointment.time}
+                                onChange={(e) =>
+                                  setNewAppointment({
+                                    ...newAppointment,
+                                    time: e.target.value,
+                                  })
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              病院名
+                            </label>
+                            <input
+                              type="text"
+                              value={newAppointment.hospital}
+                              onChange={(e) =>
+                                setNewAppointment({
+                                  ...newAppointment,
+                                  hospital: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              placeholder="病院名を入力"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              担当医
+                            </label>
+                            <input
+                              type="text"
+                              value={newAppointment.doctor}
+                              onChange={(e) =>
+                                setNewAppointment({
+                                  ...newAppointment,
+                                  doctor: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              placeholder="担当医名を入力"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              診療目的
+                            </label>
+                            <select
+                              value={newAppointment.purpose}
+                              onChange={(e) =>
+                                setNewAppointment({
+                                  ...newAppointment,
+                                  purpose: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">選択してください</option>
+                              <option value="定期診察">定期診察</option>
+                              <option value="薬の調整">薬の調整</option>
+                              <option value="検査">検査</option>
+                              <option value="相談">相談</option>
+                              <option value="その他">その他</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              メモ
+                            </label>
+                            <textarea
+                              value={newAppointment.notes}
+                              onChange={(e) =>
+                                setNewAppointment({
+                                  ...newAppointment,
+                                  notes: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              rows="3"
+                              placeholder="質問事項や持参するものなど"
+                            />
+                          </div>
+
+                          <button
+                            onClick={addAppointment}
+                            className="w-full bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors"
+                          >
+                            予約を追加
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-xl p-6 shadow-sm">
+                        <h3 className="text-lg font-medium mb-4">今後の予約</h3>
+
+                        <div className="space-y-3">
+                          {appointments.length === 0 ? (
+                            <p className="text-gray-500 text-center py-8">
+                              予約がありません
+                            </p>
+                          ) : (
+                            appointments
+                              .sort(
+                                (a, b) => new Date(a.date) - new Date(b.date)
+                              )
+                              .map((appointment) => (
+                                <div
+                                  key={appointment.id}
+                                  className="p-4 border rounded-lg hover:bg-gray-50"
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <div className="font-medium text-gray-800">
+                                        {appointment.hospital}
+                                      </div>
+                                      <div className="text-sm text-gray-600">
+                                        {new Date(
+                                          appointment.date
+                                        ).toLocaleDateString("ja-JP")}{" "}
+                                        {appointment.time}
+                                      </div>
+                                      <div className="text-sm text-gray-600">
+                                        担当医: {appointment.doctor || "未設定"}
+                                      </div>
+                                      <div className="text-sm text-gray-600">
+                                        目的: {appointment.purpose}
+                                      </div>
+                                      {appointment.notes && (
+                                        <div className="text-sm text-gray-500 mt-1">
+                                          {appointment.notes}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={() =>
+                                        setAppointments(
+                                          appointments.filter(
+                                            (a) => a.id !== appointment.id
+                                          )
+                                        )
+                                      }
+                                      className="text-red-500 hover:text-red-700"
+                                    >
+                                      <Icons.Trash />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* KEGG検索タブ */}
+                {activeTab === "kegg" && (
+                  <div className="slide-in">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-6">
+                      KEGG MEDICUS 薬剤検索
+                    </h2>
+
+                    <div className="kegg-search rounded-xl p-6 text-white mb-6">
+                      <h3 className="text-lg font-medium mb-4">
+                        薬剤データベース検索
+                      </h3>
+                      <p className="text-green-100 text-sm mb-4">
+                        KEGG
+                        MEDICUSデータベースと連携して、薬剤情報や相互作用を検索できます。
+                      </p>
+
+                      <div className="bg-white/20 rounded-lg p-4">
+                        <input
+                          type="text"
+                          placeholder="薬剤名を入力してください"
+                          className="w-full px-4 py-2 rounded-lg bg-white text-gray-800 placeholder-gray-500"
+                          onChange={(e) =>
+                            handleMedicationSearch(e.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-6 shadow-sm">
+                      <h3 className="text-lg font-medium mb-4">検索結果</h3>
+
+                      {isSearching ? (
+                        <div className="text-center py-8">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                          <p className="mt-2 text-gray-600">検索中...</p>
+                        </div>
+                      ) : searchResults.length > 0 ? (
+                        <div className="space-y-4">
+                          {searchResults.map((result) => (
+                            <div
+                              key={result.id}
+                              className="p-4 border rounded-lg"
+                            >
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <h4 className="font-medium text-gray-800">
+                                    {result.name}
+                                  </h4>
+                                  <p className="text-sm text-gray-600">
+                                    分類: {result.category}
+                                  </p>
+                                  {result.interactions.length > 0 && (
+                                    <div className="mt-2">
+                                      <p className="text-sm font-medium text-red-700">
+                                        相互作用注意:
+                                      </p>
+                                      <p className="text-sm text-red-600">
+                                        {result.interactions.join(", ")}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setNewMedication({
+                                      ...newMedication,
+                                      name: result.name,
+                                      isAntidepressant:
+                                        result.category === "抗うつ剤",
+                                      isAntipsychotic:
+                                        result.category === "抗精神病薬",
+                                      isYazFlex:
+                                        result.category === "低用量ピル",
+                                    });
+                                    setActiveTab("medications");
+                                    setShowAddForm(true);
+                                  }}
+                                  className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+                                >
+                                  追加
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-center py-8">
+                          薬剤名を入力して検索してください
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* メンタル記録タブ */}
+                {activeTab === "mental" && (
+                  <div className="slide-in">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-6">
+                      メンタル記録
+                    </h2>
+                    <p className="text-gray-600">
+                      メンタル記録機能は基本版と同じです。
+                    </p>
+                  </div>
+                )}
+
+                {/* エクスポートタブ */}
+                {activeTab === "export" && (
+                  <div className="slide-in">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-6">
+                      データエクスポート
+                    </h2>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white rounded-xl p-6 shadow-sm">
+                        <h3 className="text-lg font-medium mb-4">
+                          PDFレポート生成
+                        </h3>
+                        <p className="text-gray-600 mb-4">
+                          服薬記録、メンタル状態、予約情報を含む包括的なレポートを生成します。
+                        </p>
+                        <button
+                          onClick={handleExportPDF}
+                          className="export-button text-white px-6 py-3 rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+                        >
+                          <Icons.Download />
+                          PDF生成
+                        </button>
+                      </div>
+
+                      <div className="bg-white rounded-xl p-6 shadow-sm">
+                        <h3 className="text-lg font-medium mb-4">
+                          CSVデータエクスポート
+                        </h3>
+                        <p className="text-gray-600 mb-4">
+                          服薬記録をCSV形式でエクスポートし、外部ツールでの分析に活用できます。
+                        </p>
+                        <button
+                          onClick={handleExportCSV}
+                          className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                        >
+                          <Icons.Download />
+                          CSV生成
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      id="report-content"
+                      className="mt-8 bg-white rounded-xl p-6 shadow-sm"
+                    >
+                      <h3 className="text-lg font-medium mb-4">
+                        レポートプレビュー
+                      </h3>
+
+                      <div className="space-y-6">
+                        <div>
+                          <h4 className="font-medium text-gray-800 mb-2">
+                            基本情報
+                          </h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div>登録薬剤数: {medications.length}</div>
+                            <div>総服薬記録: {records.length}</div>
+                            <div>メンタル記録: {mentalRecords.length}</div>
+                            <div>病院予約: {appointments.length}</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-medium text-gray-800 mb-2">
+                            現在の薬剤
+                          </h4>
+                          <div className="space-y-2">
+                            {medications.map((med) => (
+                              <div
+                                key={med.id}
+                                className="text-sm border-l-4 border-blue-500 pl-3"
+                              >
+                                {med.name} {med.dosage} - {med.times.join(", ")}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-medium text-gray-800 mb-2">
+                            今後の予約
+                          </h4>
+                          <div className="space-y-2">
+                            {appointments.map((apt) => (
+                              <div
+                                key={apt.id}
+                                className="text-sm border-l-4 border-red-500 pl-3"
+                              >
+                                {new Date(apt.date).toLocaleDateString("ja-JP")}{" "}
+                                {apt.time} - {apt.hospital}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // アプリケーションをレンダリング
+      ReactDOM.render(
+        <EnhancedMedicationApp />,
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
